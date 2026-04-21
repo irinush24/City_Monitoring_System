@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -6,6 +7,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <string.h>
+#include <stdbool.h>
 
 #define BUF_SIZE 300
 
@@ -26,15 +28,92 @@ typedef struct district
     char name[30];
 } district_t;
 
-int add(int districtID, char const *user, char const *role)
+int add(const char *districtName, char const *user, char const *role)
 {
-    int districts = open("logged_district.txt", O_RDWR | O_CREAT, 0664);
+    int districts = open("logged_district.txt", O_RDWR | O_CREAT, 0644);
     if (districts < 0)
     {
         perror("Error opening districts file\n");
         return -1;
     }
-    int reports = open("reports.dat", O_WRONLY | O_APPEND | O_CREAT, 0664);
+
+    char line[256];
+    int lineLen = 0;
+    bool found = false;
+    int districtID, maxID = 0;
+
+    char readBuffer[BUF_SIZE];
+    int parsedID;
+    char parsedName[50];
+    ssize_t bytesRead;
+
+    // Read line-by-line to find the districtID
+    while ((bytesRead = read(districts, readBuffer, sizeof(readBuffer))) > 0 && !found)
+    {
+        for (ssize_t i = 0; i < bytesRead; i++)
+        {
+            char currentChar = readBuffer[i];
+
+            if (currentChar == '\n' || currentChar == '\r')
+            {
+                if (lineLen > 0)
+                {
+                    line[lineLen] = '\0';
+                    if (sscanf(line, "%d %49s", &parsedID, parsedName) >= 2)
+                    {
+                        if (parsedID > maxID) maxID = parsedID;
+
+                        if (strcmp(parsedName, districtName) == 0)
+                        {
+                            found = true;
+                        }
+                    }
+                    lineLen = 0;
+                }
+            }
+            else
+            {
+                if (lineLen < sizeof(line) - 1)
+                    line[lineLen++] = currentChar;
+            }
+        }
+    }
+
+    // Process the last line if the file didn't end with a newline
+    if (!found && lineLen > 0)
+    {
+        line[lineLen] = '\0';
+        if (sscanf(line, "%d %49s", &parsedID, parsedName) >= 2)
+        {
+            if (parsedID > maxID) maxID = parsedID;
+            if (strcmp(parsedName, districtName) == 0)
+            {
+                found = true;
+            }
+        }
+    }
+
+    if (!found)
+    {
+        districtID = maxID + 1;
+
+        if (mkdir(districtName, 0750) < 0)
+        {
+            perror("Error creating district directory");
+        }
+
+        lseek(districts, 0, SEEK_END);
+        char entry[256];
+        int entryLen = snprintf(entry, sizeof(entry), "%d\t%s\t%s\t%s %s\n", districtID, districtName, user, role, "add");
+        write(districts, entry, entryLen);
+    }
+
+    lseek(districts, 0, SEEK_END);
+
+    char filePath[150];
+    snprintf(filePath, sizeof(filePath), "%s/reports.dat", districtName);
+
+    int reports = open(filePath, O_WRONLY | O_APPEND | O_CREAT, 0664);
     if(reports < 0)
     {
         perror("Error opening report file\n");
@@ -43,90 +122,95 @@ int add(int districtID, char const *user, char const *role)
     }
 
     char buffer[BUF_SIZE];
-    sprintf(buffer, "%d\t%s\t%s %s\n", districtID, user, role, "add");
 
-    ssize_t bytesWritten = write(districts, buffer, strlen(buffer));
-    if (bytesWritten < strlen(buffer))
-    {
-        perror("Incomplete write to file");
-        close(districts);
-        return -3;
-    }
-
+    // Create and write the report to reports.dat
     report_t *report = malloc(sizeof(report_t));
     if(report == NULL)
     {
-        perror("Error allocating report\n");
+        perror("Error allocating report");
         close(reports);
+        close(districts);
         return -2;
     }
-    report->reportID =  rand() % INT_MAX;
-    report -> timestamp = time(NULL);
+
+    report->reportID = rand() % INT_MAX;
+    report->timestamp = time(NULL);
+
     char *message = "X: ";
     write(STDOUT_FILENO, message, strlen(message));
-    ssize_t bytesRead = read(STDIN_FILENO, buffer, BUF_SIZE - 1);
+    bytesRead = read(STDIN_FILENO, buffer, BUF_SIZE - 1);
     if (bytesRead > 0)
     {
         buffer[bytesRead] = '\0';
-        report -> latitude = strtof(buffer, NULL);
+        report->latitude = strtof(buffer, NULL);
     }
+
     message = "Y: ";
     write(STDOUT_FILENO, message, strlen(message));
     bytesRead = read(STDIN_FILENO, buffer, BUF_SIZE - 1);
     if (bytesRead > 0)
     {
         buffer[bytesRead] = '\0';
-        report -> longitude = strtof(buffer, NULL);
+        report->longitude = strtof(buffer, NULL);
     }
-    message = "Category (road/lightning/flooding/other): ";
+
+    message = "Category (road/lighting/flooding/other): ";
     write(STDOUT_FILENO, message, strlen(message));
     bytesRead = read(STDIN_FILENO, buffer, BUF_SIZE - 1);
     if (bytesRead > 0)
     {
-        if (buffer[bytesRead - 1] == '\n')
-            buffer[bytesRead - 1] = '\0';
-        else
-            buffer[bytesRead] = '\0';
-        strcpy(report -> category, buffer);
+        if (buffer[bytesRead - 1] == '\n') buffer[bytesRead - 1] = '\0';
+        else buffer[bytesRead] = '\0';
+        strcpy(report->category, buffer);
     }
+
     message = "Severity level: (1/2/3): ";
     write(STDOUT_FILENO, message, strlen(message));
     bytesRead = read(STDIN_FILENO, buffer, BUF_SIZE - 1);
     if (bytesRead > 0)
     {
         buffer[bytesRead] = '\0';
-        report -> severityLevel = atoi(buffer);
+        report->severityLevel = atoi(buffer);
     }
+
     message = "Description: ";
     write(STDOUT_FILENO, message, strlen(message));
     bytesRead = read(STDIN_FILENO, buffer, BUF_SIZE - 1);
     if (bytesRead > 0)
     {
-        if (buffer[bytesRead - 1] == '\n')
-            buffer[bytesRead - 1] = '\0';
-        else
-            buffer[bytesRead] = '\0';
-        strcpy(report -> description, buffer);
+        if (buffer[bytesRead - 1] == '\n') buffer[bytesRead - 1] = '\0';
+        else buffer[bytesRead] = '\0';
+        strcpy(report->description, buffer);
     }
-    strcpy(report -> inspectorName, user);
-    bytesWritten = write(reports, report, sizeof(report_t));
+
+    strcpy(report->inspectorName, user);
+
+    int bytesWritten = write(reports, report, sizeof(report_t));
     if (bytesWritten < (ssize_t)sizeof(report_t))
     {
         perror("Incomplete write to file\n");
         free(report);
         close(reports);
+        close(districts);
         return -3;
     }
+
     free(report);
     close(reports);
     close(districts);
     return 1;
 }
 
-int main(int argc, char *argv[]) {
+/*void view(int districtID, int reportID)
+{
+    char buffer[BUF_SIZE];
+}*/
+
+int main(int argc, char *argv[])
+{
     if (argc < 7)
     {
-        char *message = "Too few command line arguments";
+        char *message = "Too few command line arguments\n";
         write(STDOUT_FILENO, message, strlen(message));
         exit(-2);
     }
@@ -134,13 +218,14 @@ int main(int argc, char *argv[]) {
     strcpy(role, argv[2]);
     strcpy(user, argv[4]);
     strcpy(command, argv[5]);
-    printf("Command: %s\n", command);
     strcpy(districtName, argv[6]);
+
     if (strcmp(role, "inspector") == 0)
     {
         if (strcmp(command, "--add") == 0)
         {
-            if (add(1, user, role) != 1)
+            strcpy(districtName, argv[6]);
+            if (add(districtName, user, role) != 1)
             {
                 perror("Error adding report\n");
                 exit(-2);
@@ -151,7 +236,8 @@ int main(int argc, char *argv[]) {
     {
         if (strcmp(command, "--add") == 0)
         {
-            if (add(1, user, role) != 1)
+            strcpy(districtName, argv[6]);
+            if (add(districtName, user, role) != 1)
             {
                 perror("Error adding report\n");
                 exit(-2);
