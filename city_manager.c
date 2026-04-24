@@ -43,6 +43,36 @@ void modeToString(mode_t mode, char *str)
     if (mode & S_IXOTH) str[8] = 'x';
 }
 
+void logOperation(char const *districtName, char const *user, char const* role, char const* action)
+{
+    if (strcmp(role, "inspector") == 0)     // Inspectors' actions are not supposed to be logged
+    {
+        return;
+    }
+
+    char logPath[150];
+    snprintf(logPath, sizeof(logPath), "%s/logged_district.txt", districtName);
+    struct stat st;
+
+    // Check for permissions and that the file exists
+    if (stat(logPath, &st) == 0 && !(st.st_mode & S_IWUSR))
+    {
+        char *message = "Manager lacks write access to logged_district.txt\n";
+        write(STDERR_FILENO, message, strlen(message));
+        return;
+    }
+
+    // Open, write and ensure permissions
+    int logFd = open(logPath, O_WRONLY | O_APPEND | O_CREAT, 0644);
+    if (logFd >= 0)
+    {
+        char logBuf[256];
+        int len = snprintf(logBuf, sizeof(logBuf), "%ld\t\t%s\t%s %s\n", time(NULL), user, role, action);
+        write(logFd, logBuf, len);
+        close(logFd);
+    }
+}
+
 void add(char const *districtName, char const *user, char const *role)
 {
     struct stat st;
@@ -159,32 +189,21 @@ void add(char const *districtName, char const *user, char const *role)
         perror("Incomplete write to file\n");
     close(reports);
 
-    char logPath[150];
-    snprintf(logPath, sizeof(logPath), "%s/logged_district.txt", districtName);
+    // Log the add operation
+    logOperation(districtName, user, role, "add");
 
-    if (strcmp(role, "inspector") == 0)
+    snprintf(path, sizeof(path), "%s/district.cfg", districtName);
+    if (stat(path, &st) < 0)
     {
-        message = "Inspector restriction: cannot write to logged_district.txt\n";
-        write(STDERR_FILENO, message, strlen(message));
-    }
-    else
-    {
-        if (stat(logPath, &st) == 0 && !(st.st_mode & S_IWUSR))
+        int config = open(path, O_RDONLY | O_CREAT, 0640);
+        if (config < 0)
         {
-            message = "Manager lacks write access to logged_district.txt \n";
-            write(STDERR_FILENO, message, strlen(message));
+            perror("Error creating district.cfg file");
         }
         else
         {
-            int logFd = open(logPath, O_WRONLY | O_APPEND | O_CREAT, 0644);
-            chmod(logPath, 0644);
-            if (logFd >= 0)
-            {
-                char logBuf[256];
-                int len = snprintf(logBuf, sizeof(logBuf), "%ld\n%s\nmanager add\n", time(NULL), user);
-                write(logFd, logBuf, len);
-                close(logFd);
-            }
+            chmod(path, 0640);
+            close(config);
         }
     }
 }
@@ -288,11 +307,10 @@ void view(char const *districtName, int const soughtReportID, char const *role)
 {
     char path[150];
     snprintf(path, sizeof(path), "%s/reports.dat", districtName);
-
     char *message;
-
     struct stat st;
-    if (stat(path, &st) == -1)
+
+    if (stat(path,&st) == -1)
     {
         message = "District or report file does not exist\n";
         write(STDERR_FILENO, message, strlen(message));
@@ -337,7 +355,7 @@ void view(char const *districtName, int const soughtReportID, char const *role)
     close(fd);
 }
 
-void removeReport(char const *districtName, int const IDtoRemove, char const *role)
+void removeReport(char const *districtName, int const IDtoRemove, char const *user, char const *role)
 {
     char path[150];
     snprintf(path, sizeof(path), "%s/reports.dat", districtName);
@@ -407,6 +425,9 @@ void removeReport(char const *districtName, int const IDtoRemove, char const *ro
             {
                 message = "Successfully removed report\n";
                 write(STDOUT_FILENO, message, strlen(message));
+
+                // Add the operation to the log file
+                logOperation(districtName, user, role, "remove");
             }
             break;  // Exiting the initial search loop
         }
@@ -420,7 +441,7 @@ void removeReport(char const *districtName, int const IDtoRemove, char const *ro
     close(fd);
 }
 
-void updateThreshold(char const *districtName, int const newLimit, char const *role)
+void updateThreshold(char const *districtName, int const newLimit, char const *user, char const *role)
 {
     char path[150];
     snprintf(path, sizeof(path), "%s/district.cfg", districtName);
@@ -469,6 +490,8 @@ void updateThreshold(char const *districtName, int const newLimit, char const *r
 
     message = "Threshold updated successfully\n";
     write(STDOUT_FILENO, message, strlen(message));
+    // Add the operation to the log file
+    logOperation(districtName, user, role, "update-threshold");
 }
 
 int parseCondition(const char *input, char *field, char *op, char *value)
@@ -479,7 +502,7 @@ int parseCondition(const char *input, char *field, char *op, char *value)
     return 0; // Failure
 }
 
-int matchCondition(report_t *r, const char *field, const char *op, const char *value)
+int matchCondition(report_t const *r, char const *field, char const *op, char const *value)
 {
     // 1. Handle Integer Fields (severity)
     if (strcmp(field, "severity") == 0)
@@ -531,9 +554,83 @@ int matchCondition(report_t *r, const char *field, const char *op, const char *v
     return 0;
 }
 
-void filter(char *districtName, char *condition)
+void filter(char *districtName, int numConditions, char *conditions[], const char *role)
 {
-    // To be implemented
+    char path[150];
+    snprintf(path, sizeof(path), "%s/reports.dat", districtName);
+    char *message;
+    struct stat st;
+
+    // Permission checks
+    if (stat(path,&st) == -1)
+    {
+        message = "District or report file does not exist\n";
+        write(STDERR_FILENO, message, strlen(message));
+        return;
+    }
+
+    int canRead = 0;
+    if (strcmp(role, "manager") == 0 && (st.st_mode & S_IRUSR)) canRead = 1;
+    if (strcmp(role, "inspector") == 0 && (st.st_mode & S_IRGRP)) canRead = 1;
+
+    if (!canRead)
+    {
+        message = "Declared role does not have reading privileges for reports.dat\n";
+        write(STDERR_FILENO, message, strlen(message));
+        exit(-1);
+    }
+
+    int fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return;
+
+    report_t report;
+    int matchCount = 0;
+    while (read(fd, &report, sizeof(report_t)) == sizeof(report_t))
+    {
+        bool passedAll = true;
+
+        for (int i = 0; i < numConditions; i++)
+        {
+            char field[50], op[10], value[50];
+
+            if (parseCondition(conditions[i], field, op, value))
+            {
+                // If one condition doesn't match for this report, move on to checking the next one
+                if (!matchCondition(&report, field, op, value))
+                {
+                    passedAll = false;
+                    break;
+                }
+            }
+            else
+            {
+                message = "Invalid condition format\n";
+                write(STDERR_FILENO, message, strlen(message));
+                close(fd);
+                exit(-1);
+            }
+        }
+
+        if (passedAll)
+        {
+            char output[512];
+            int len = snprintf(output, sizeof(output),
+                           "ID: %d | Inspector: %s | Coordinates: %.2f %.2f | Category: %s | Severity: %d\nDescription: %s\n---\n",
+                           report.reportID, report.inspectorName, report.latitude, report.longitude, report.category,
+                           report.severityLevel, report.description);
+            write(STDOUT_FILENO, output, len);
+            matchCount++;
+        }
+    }
+
+    if (matchCount == 0)
+    {
+        message = "No reports matched the specified filters\n";
+        write(STDERR_FILENO, message, strlen(message));
+    }
+
+    close(fd);
 }
 
 int main(int argc, char *argv[])
@@ -572,15 +669,15 @@ int main(int argc, char *argv[])
     }
     else if (strcmp(command, "--remove") == 0)
     {
-        removeReport(districtName, atoi(argv[7]), role);
+        removeReport(districtName, atoi(argv[7]), user, role);
     }
-    else if (strcmp(command, "--update_threshold") == 0)
+    else if (strcmp(command, "--update-threshold") == 0)
     {
-        updateThreshold(districtName, atoi(argv[7]), role);
+        updateThreshold(districtName, atoi(argv[7]), user, role);
     }
     else if (strcmp(command, "--filter") == 0)
     {
-        // To be implemented
+        filter(districtName, argc - 7, &argv[7], role);
     }
     else
     {
