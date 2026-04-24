@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <stdbool.h>
+#include <dirent.h>
 
 #define BUF_SIZE 300
 
@@ -21,7 +22,6 @@ typedef struct report
     time_t timestamp;
     char description[140];
 } report_t;
-
 
 void modeToString(mode_t mode, char *str)
 {
@@ -64,9 +64,9 @@ void add(char const *districtName, char const *user, char const *role)
     if (stat(path, &st) == 0)
     {
         int canWrite = 0;
-        if (strcmp(role, "manager") == 0 && (st.st_mode & S_IWUSR) == 0)
+        if (strcmp(role, "manager") == 0 && (st.st_mode & S_IWUSR))
             canWrite = 1;
-        if (strcmp(role, "inspector") == 0 && (st.st_mode & S_IRUSR) == 0)
+        if (strcmp(role, "inspector") == 0 && (st.st_mode & S_IWGRP))
             canWrite = 1;
 
         if (!canWrite)
@@ -77,7 +77,7 @@ void add(char const *districtName, char const *user, char const *role)
         }
     }
 
-    int reports = open(path, O_WRONLY | O_APPEND | O_CREAT, 0644);
+    int reports = open(path, O_WRONLY | O_APPEND | O_CREAT, 0664);
     if (reports < 0)
     {
         perror("Error opening report file");
@@ -154,7 +154,7 @@ void add(char const *districtName, char const *user, char const *role)
     strncpy(report.inspectorName, user, 19);
     report.inspectorName[19] = '\0';
 
-    int bytesWritten = write(reports, &report, sizeof(report_t));
+    int bytesWritten = (ssize_t)write(reports, &report, sizeof(report_t));
     if (bytesWritten < sizeof(report_t))
         perror("Incomplete write to file\n");
     close(reports);
@@ -189,6 +189,48 @@ void add(char const *districtName, char const *user, char const *role)
     }
 }
 
+void checkDanglingLinks()
+{
+    // Open the current working directory
+    DIR *dir = opendir(".");
+    if (dir == NULL)
+    {
+        perror("Error opening current directory");
+        return;
+    }
+
+    struct dirent *entry;
+    struct stat lst, st;
+    char *prefix = "active_reports-";
+    int prefixLen = strlen(prefix);
+
+    // Scan directory contents
+    while ((entry = readdir(dir)) != NULL)
+    {
+        // Check if the file starts with "active_reports-"
+        if (strncmp(entry->d_name, prefix, prefixLen) == 0)
+        {
+            // Use lstat() to check the file itself without following it
+            if (lstat(entry->d_name, &lst) == 0)
+            {
+                if (S_ISLNK(lst.st_mode))
+                {
+                    if (stat(entry->d_name, &st) == -1)
+                    {
+                        char warning[256];
+                        int len = snprintf(warning, sizeof(warning), "Warning: Dangling symlink detected: %s\n",
+                                           entry->d_name);
+                        write(STDOUT_FILENO, warning, len);
+
+                        // Deleting the dangling link to clean it up
+                        unlink(entry->d_name);
+                    }
+                }
+            }
+        }
+    }
+    closedir(dir);
+}
 
 void list(char const *districtName, char const *role)
 {
@@ -241,7 +283,6 @@ void list(char const *districtName, char const *role)
     }
     close(fd);
 }
-
 
 void view(char const *districtName, int const soughtReportID, char const *role)
 {
@@ -311,7 +352,6 @@ void removeReport(char const *districtName, int const IDtoRemove, char const *ro
         return;
     }
 
-    int canRead = 0;
     if (strcmp(role, "manager") != 0)
     {
         message = "Error: Only the manager role can remove reports\n";
@@ -431,6 +471,71 @@ void updateThreshold(char const *districtName, int const newLimit, char const *r
     write(STDOUT_FILENO, message, strlen(message));
 }
 
+int parseCondition(const char *input, char *field, char *op, char *value)
+{
+    // %[^:] means "read a string of any characters until you hit a colon"
+    if (sscanf(input, "%[^:]:%[^:]:%s", field, op, value) == 3)
+        return 1; // Success
+    return 0; // Failure
+}
+
+int matchCondition(report_t *r, const char *field, const char *op, const char *value)
+{
+    // 1. Handle Integer Fields (severity)
+    if (strcmp(field, "severity") == 0)
+    {
+        int num_val = atoi(value); // Convert string value to integer
+
+        if (strcmp(op, "==") == 0) return r->severityLevel == num_val;
+        if (strcmp(op, "!=") == 0) return r->severityLevel != num_val;
+        if (strcmp(op, "<")  == 0) return r->severityLevel < num_val;
+        if (strcmp(op, "<=") == 0) return r->severityLevel <= num_val;
+        if (strcmp(op, ">")  == 0) return r->severityLevel > num_val;
+        if (strcmp(op, ">=") == 0) return r->severityLevel >= num_val;
+    }
+    // 2. Handle Time/Long Integer Fields (timestamp)
+    else if (strcmp(field, "timestamp") == 0)
+    {
+        time_t time_val = (time_t)atol(value); // time_t is safely cast from long
+
+        if (strcmp(op, "==") == 0) return r->timestamp == time_val;
+        if (strcmp(op, "!=") == 0) return r->timestamp != time_val;
+        if (strcmp(op, "<")  == 0) return r->timestamp < time_val;
+        if (strcmp(op, "<=") == 0) return r->timestamp <= time_val;
+        if (strcmp(op, ">")  == 0) return r->timestamp > time_val;
+        if (strcmp(op, ">=") == 0) return r->timestamp >= time_val;
+    }
+    // 3. Handle String Fields (category, inspector)
+    else if (strcmp(field, "category") == 0 || strcmp(field, "inspector") == 0)
+    {
+        // Point to the correct string in the struct based on the field
+        const char *record_str;
+        if (strcmp(field, "category") == 0) {
+            record_str = r->category;
+        } else {
+            record_str = r->inspectorName;
+        }
+
+        // strcmp returns 0 if equal, < 0 if strictly less, > 0 if strictly greater
+        int cmp = strcmp(record_str, value);
+
+        if (strcmp(op, "==") == 0) return cmp == 0;
+        if (strcmp(op, "!=") == 0) return cmp != 0;
+        if (strcmp(op, "<")  == 0) return cmp < 0;
+        if (strcmp(op, "<=") == 0) return cmp <= 0;
+        if (strcmp(op, ">")  == 0) return cmp > 0;
+        if (strcmp(op, ">=") == 0) return cmp >= 0;
+    }
+
+    // Return 0 (false) if the field or operator is unrecognized
+    return 0;
+}
+
+void filter(char *districtName, char *condition)
+{
+    // To be implemented
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 7)
@@ -444,6 +549,7 @@ int main(int argc, char *argv[])
     strcpy(user, argv[4]);
     strcpy(command, argv[5]);
     strcpy(districtName, argv[6]);
+    checkDanglingLinks();
 
     if (strcmp(role, "inspector") != 0 && strcmp(role, "manager") != 0)
     {
@@ -463,6 +569,18 @@ int main(int argc, char *argv[])
     else if (strcmp(command, "--view") == 0)
     {
         view(districtName, atoi(argv[7]), role);
+    }
+    else if (strcmp(command, "--remove") == 0)
+    {
+        removeReport(districtName, atoi(argv[7]), role);
+    }
+    else if (strcmp(command, "--update_threshold") == 0)
+    {
+        updateThreshold(districtName, atoi(argv[7]), role);
+    }
+    else if (strcmp(command, "--filter") == 0)
+    {
+        // To be implemented
     }
     else
     {
