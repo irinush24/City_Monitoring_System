@@ -113,7 +113,7 @@ void add(char const *districtName, char const *user, char const *role)
         perror("Error opening report file");
         return;
     }
-    chmod(path, 0644);      // Ensure explicit permissions after creation
+    chmod(path, 0664);      // Ensure explicit permissions after creation
 
     // Create active reports symlink
     char symPath[150];
