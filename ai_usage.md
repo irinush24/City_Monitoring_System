@@ -39,16 +39,12 @@ int items_parsed = sscanf(input, "%[^:]:%[^:]:%s", field, op, value);
 ```
 
 ### The changes I made to the AI generated reply
-I already had the <stdio.h> library included at the top of my .c file so I removed the line
-I chose to remove the items_parsed variable and directly check the result of the sscanf function inside the if statement.
-I also removed the curly braces of the return 1 statement since they are not required.
+I already had the <stdio.h> library included at the top of my .c file so I removed the line. I chose to remove the items_parsed variable and directly check the result of the sscanf function inside the if statement. I also removed the curly braces of the return 1 statement since they are not required.
 
 
 ## The matchCondition function
 ### Prompt
-Knowing the structure of the report_t custom data type that I presented earlier and the parseCondition function, implement 
-the function with the following signature: ```int match_condition(report_t *r, const char *field, const char *op, const char
-*value);``` which returns 1 if the record satisfies the condition and 0 otherwise.
+Knowing the structure of the report_t custom data type that I presented earlier and the parseCondition function, implement the function with the following signature: ```int match_condition(report_t *r, const char *field, const char *op, const char *value);``` which returns 1 if the record satisfies the condition and 0 otherwise.
 
 ### AI Reply
 ```
@@ -109,5 +105,4 @@ int num_val = atoi(value); // Convert string value to integer
 ```
 
 ### The changes I made to the AI generated reply
-I already had the <string.h> and <stdlib.h> libraries included at the top of my .c file so I removed them from where they
-are currently written. Besides that, I kept everything that the AI generated.
+I already had the <string.h> and <stdlib.h> libraries included at the top of my .c file so I removed them from where they are currently written. Besides that, I kept everything that the AI generated.
