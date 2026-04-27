@@ -3,8 +3,10 @@ The agent that I used is Google Gemini. I chose to use this specific agent becau
 ## The parseCondition function
 ### Prompt 
 I have to implement a parse_condition function which splits a field:operator:value string into its three parts. I receive this condition via command line and I have this as the function signature:
-int parse_condition(const char *input, char *field, char *op, char *value);
+```int parse_condition(const char *input, char *field, char *op, char *value);```
 The reports structure is the following:
+
+```
 typedef struct report
 {
 int reportID;
@@ -15,10 +17,12 @@ int severityLevel;
 time_t timestamp;
 char description[140];
 } report_t;
+```
 
 ### AI Reply
 It gave me two possible implementations, I chose the one that used the function sscanf, because it is more concise:
 
+```
 #include <stdio.h>
 
 int parse_condition(const char *input, char *field, char *op, char *value)
@@ -32,6 +36,7 @@ int items_parsed = sscanf(input, "%[^:]:%[^:]:%s", field, op, value);
     }
     return 0; // Failure
 }
+```
 
 ### The changes I made to the AI generated reply
 I already had the <stdio.h> library included at the top of my .c file so I removed the line
@@ -42,11 +47,11 @@ I also removed the curly braces of the return 1 statement since they are not req
 ## The matchCondition function
 ### Prompt
 Knowing the structure of the report_t custom data type that I presented earlier and the parseCondition function, implement 
-the function with the following signature: int match_condition(report_t *r, const char *field, const char *op, const char
-*value); which returns 1 if the record satisfies the condition and 0 otherwise.
+the function with the following signature: ```int match_condition(report_t *r, const char *field, const char *op, const char
+*value);``` which returns 1 if the record satisfies the condition and 0 otherwise.
 
 ### AI Reply
-
+```
 #include <string.h>
 #include <stdlib.h>
 
@@ -101,6 +106,7 @@ int num_val = atoi(value); // Convert string value to integer
     // Return 0 (false) if the field or operator is unrecognized
     return 0;
 }
+```
 
 ### The changes I made to the AI generated reply
 I already had the <string.h> and <stdlib.h> libraries included at the top of my .c file so I removed them from where they
