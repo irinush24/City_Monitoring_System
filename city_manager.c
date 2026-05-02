@@ -653,20 +653,26 @@ void removeDistrict(char const *districtName, char const *user, char const *role
         perror("Failed to create child process");;
         exit(-1);
     }
+
     if (pid == 0)
     {
+        // Child process
         if (strlen(districtName) == 0 || strcmp(districtName, "/") == 0 || strcmp(districtName, ".") == 0 || strcmp(districtName, "..") == 0 || strchr(districtName, '/') != NULL)
+        {
             perror("Invalid district name");
-        execlp("rm", "rm -rf", districtName, NULL);
+            exit(-1);
+        }
+        execlp("rm", "rm", "-rf", districtName, NULL);
         exit(0);
     }
     else
     {
+        // Parent process
         int status;
         waitpid(pid, &status, 0);
         char *message;
 
-        if (WIFEXITED(status) || WEXITSTATUS(status))
+        if (WIFEXITED(status) || WEXITSTATUS(status) == 0)
             message = "District sucessfully removed\n";
         else
             message = "Error removing district\n";
