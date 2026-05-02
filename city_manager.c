@@ -9,6 +9,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <dirent.h>
+#include <sys/wait.h>
 
 #define BUF_SIZE 300
 
@@ -22,6 +23,9 @@ typedef struct report
     time_t timestamp;
     char description[140];
 } report_t;
+
+
+// Phase 1 structure
 
 void modeToString(mode_t mode, char *str)
 {
@@ -554,7 +558,7 @@ int matchCondition(report_t const *r, char const *field, char const *op, char co
     return 0;
 }
 
-void filter(char *districtName, int numConditions, char *conditions[], const char *role)
+void filter(char const *districtName, int numConditions, char *conditions[], const char *role)
 {
     char path[150];
     snprintf(path, sizeof(path), "%s/reports.dat", districtName);
@@ -633,6 +637,43 @@ void filter(char *districtName, int numConditions, char *conditions[], const cha
     close(fd);
 }
 
+// Phase 2 functions
+
+void removeDistrict(char const *districtName, char const *user, char const *role)
+{
+    if (strcmp(role, "manager") != 0)
+    {
+        perror("This role does not have district removal privileges");
+        exit(-1);
+    }
+
+    pid_t pid;
+    if ((pid = fork()) < 0)
+    {
+        perror("Failed to create child process");;
+        exit(-1);
+    }
+    if (pid == 0)
+    {
+        if (strlen(districtName) == 0 || strcmp(districtName, "/") == 0 || strcmp(districtName, ".") == 0 || strcmp(districtName, "..") == 0 || strchr(districtName, '/') != NULL)
+            perror("Invalid district name");
+        execlp("rm", "rm -rf", districtName, NULL);
+        exit(0);
+    }
+    else
+    {
+        int status;
+        waitpid(pid, &status, 0);
+        char *message;
+
+        if (WIFEXITED(status) || WEXITSTATUS(status))
+            message = "District sucessfully removed\n";
+        else
+            message = "Error removing district\n";
+        write(STDOUT_FILENO, message, strlen(message));
+    }
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 7)
@@ -678,6 +719,10 @@ int main(int argc, char *argv[])
     else if (strcmp(command, "--filter") == 0)
     {
         filter(districtName, argc - 7, &argv[7], role);
+    }
+    else if (strcmp(command, "--remove-district") == 0)
+    {
+        removeDistrict(districtName, user, role);
     }
     else
     {
