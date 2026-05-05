@@ -210,6 +210,39 @@ void add(char const *districtName, char const *user, char const *role)
             close(config);
         }
     }
+
+    // Attempt to read the monitor's PID
+    int pidFd = open(".monitor_pid", O_RDONLY);
+    pid_t monitorPid = -1;
+    bool success = false;
+
+    if (pidFd >= 0)
+    {
+        char pidBuf[32];
+        bytesRead = read(pidFd, pidBuf, sizeof(pidBuf) - 1);
+        if (bytesRead > 0)
+        {
+            pidBuf[bytesRead] = '\0';
+            monitorPid = (pid_t)atoi(pidBuf);
+            // Send the signal using kill()
+            if (monitorPid > 0 && kill(monitorPid, SIGUSR1) == 0)
+                success = true;
+        }
+        close(pidFd);
+    }
+
+    // Display the outcome to the standdard output
+    char logMsg[256];
+    if (success)
+    {
+        int len = snprintf(logMsg, sizeof(logMsg), "System Message: Monitor process (PID %d) successfully notified of new report\n", monitorPid);
+        write(STDOUT_FILENO, logMsg, len);
+    }
+    else
+    {
+        char *errMsg = "System Error: Monitor could not be informed of the event\n";
+        write(STDOUT_FILENO, errMsg, strlen(errMsg));
+    }
 }
 
 void checkDanglingLinks()
