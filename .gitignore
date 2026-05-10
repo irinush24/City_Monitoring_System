@@ -1,2 +1,10 @@
 ./cmake-build-debug
 *.out
+city_manager
+monitor_reports
+.monitor_pid
+active_reports-*
+district.cfg
+logged_district.txt
+reports.dat
+*.xml
