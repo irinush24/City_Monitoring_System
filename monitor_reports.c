@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <errno.h>
 
 #define PID_FILE ".monitor_pid"
 
@@ -79,15 +80,20 @@ int main(int argc, char *argv[])
         pause();
     }
 
-    if (unlink(PID_FILE) < 0)
+    // Helps against accidental multiple SIGINT
+    int ret;
+    do
+    {
+        ret = unlink(PID_FILE);
+    } while (ret == -1 && errno == EINTR);
+
+    if (ret == 0 || errno == ENOENT)
     {
         char *cleanupMessage = "Cleaned up .monitor_pid file\n";
         write(STDOUT_FILENO, cleanupMessage, strlen(cleanupMessage));
     }
     else
-    {
         perror("Failed to remove .monitor_pid");
-    }
 
     char *exitMessage = "SIGINT caught. Exiting...\n";
     write(STDOUT_FILENO, exitMessage, strlen(exitMessage));

@@ -231,18 +231,27 @@ void add(char const *districtName, char const *user, char const *role)
         close(pidFd);
     }
 
-    // Display the outcome to the standdard output
-    char logMsg[256];
-    if (success)
+    // Write the acknowledgement into the district's log file
+    char logPath[150];
+    snprintf(logPath, sizeof(logPath), "%s/logged_district.txt", districtName);
+
+    int logFd = open(logPath, O_WRONLY | O_APPEND);
+    if (logFd >= 0)
     {
-        int len = snprintf(logMsg, sizeof(logMsg), "System Message: Monitor process (PID %d) successfully notified of new report\n", monitorPid);
-        write(STDOUT_FILENO, logMsg, len);
+        char logMsg[BUF_SIZE];
+        if (success)
+        {
+            int len = snprintf(logMsg, sizeof(logMsg), "System Message: Monitor process (PID %d) successfully notified of new report\n", monitorPid);
+            write(logFd, logMsg, len);
+        }
+        else
+        {
+            int len = snprintf(logMsg, sizeof(logMsg), "System Error: Monitor could not be informed of the event\n");
+            write(logFd, logMsg, len);
+        }
+        close(logFd);
     }
-    else
-    {
-        char *errMsg = "System Error: Monitor could not be informed of the event\n";
-        write(STDOUT_FILENO, errMsg, strlen(errMsg));
-    }
+
 }
 
 void checkDanglingLinks()
