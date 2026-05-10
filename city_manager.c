@@ -10,6 +10,8 @@
 #include <stdbool.h>
 #include <dirent.h>
 #include <sys/wait.h>
+#include <errno.h>
+#include <signal.h>
 
 #define BUF_SIZE 300
 
@@ -679,8 +681,6 @@ void filter(char const *districtName, int numConditions, char *conditions[], con
     close(fd);
 }
 
-// Phase 2 functions
-
 void removeDistrict(char const *districtName, char const *user, char const *role)
 {
     if (strcmp(role, "manager") != 0)
@@ -715,7 +715,20 @@ void removeDistrict(char const *districtName, char const *user, char const *role
         char *message;
 
         if (WIFEXITED(status) || WEXITSTATUS(status) == 0)
-            message = "District sucessfully removed\n";
+        {   
+            char symPath[150];
+            snprintf(symPath, sizeof(symPath), "active_reports-%s", districtName);
+
+            if(unlink(symPath) == 0 || errno == ENOENT)  // If the symlink doesn't exist, we can consider it a success as well
+            {
+                message = "District and symbolic link removed successfully\n";
+            }    
+            else
+            {
+                perror("District removed but failed to remove symbolic link");
+                message = "District removed but failed to remove symbolic link\n";
+            }
+        }
         else
             message = "Error removing district\n";
         write(STDOUT_FILENO, message, strlen(message));
