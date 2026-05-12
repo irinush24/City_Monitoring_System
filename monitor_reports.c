@@ -22,8 +22,31 @@ void handleSigusr1(int signo)
     write(STDOUT_FILENO, message, strlen(message));
 }
 
-int main(int argc, char *argv[])
+int main(void)
 {
+    // Check if the .monitor_pid file already exists
+    int checkFd = open(PID_FILE, O_RDONLY);
+    if(checkFd >= 0)
+    {
+        char existingPid[32];
+        ssize_t bytesRead = read(checkFd, existingPid, sizeof(existingPid) - 1);
+        close(checkFd);
+
+        if (bytesRead > 0)
+        {
+            existingPid[bytesRead] = '\0'; // Null-terminate the string
+
+            if(existingPid[strlen(existingPid) - 1] == '\n')
+                existingPid[strlen(existingPid) - 1] = '\0'; // Remove newline if present
+
+            char errMsg[100];
+           int len = snprintf(errMsg, sizeof(errMsg), "ERROR|Monitor already running with PID: %s\n", existingPid);
+            write(STDOUT_FILENO, errMsg, len);
+        }
+        close(checkFd);
+        exit(EXIT_FAILURE);
+    }
+
     // Create or overwrite the hidden .monitor_pid file
     int fd = open(PID_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0)
